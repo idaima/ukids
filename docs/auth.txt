@@ -1,0 +1,71 @@
+1.短信验证码
+https://fastapi.ukids.cn/ucapp/sms
+
+curl -H "Cache-Control: public, max-age=3600" -H "format: JSON" -H "channel: anp6" -H "ver: 5.0.3" -H "verCode: 503" -H "xfrom: 1" -H "hos: Android16" -H "token: " -H "mode: parents" -H "dtp: phone" -H "chdAgeDays: -1" -H "Content-Type: application/json; charset=UTF-8" -H "Host: fastapi.ukids.cn" -H "User-Agent: okhttp/3.12.8" --data-binary "{\"mobile\":\"13800000000\",\"type\":\"1\"}" "https://fastapi.ukids.cn/ucapp/sms"
+
+接口返回示例：
+{
+	"success": true,
+	"data": {
+		"msg": "验证码已发送"
+	},
+	"error": null,
+	"page": null,
+	"curtime": 1767168956810
+}
+
+2.短信登录
+https://fastapi.ukids.cn/ucapp/mobileLogin
+
+curl -H "xchain: 13" -H "Cache-Control: public, max-age=3600" -H "format: JSON" -H "channel: anp6" -H "ver: 5.0.3" -H "verCode: 503" -H "xfrom: 1" -H "hos: Android16" -H "token: " -H "mode: parents" -H "dtp: phone" -H "chdAgeDays: -1" -H "Content-Type: application/json; charset=UTF-8" -H "Host: fastapi.ukids.cn" -H "User-Agent: okhttp/3.12.8" --data-binary "{\"verifyCode\":\"0000\",\"mobile\":\"13800000000\"}" "https://fastapi.ukids.cn/ucapp/mobileLogin"
+
+接口返回示例：
+{
+	"success": true,
+	"data": {
+		"token": {
+			"token": "xxxxxx",
+			"expires": 18000,
+			"refreshToken": "xxxxxx",
+			"utag": "xxxxxx",
+			"openid": null
+		},
+		"user": {
+			"mobile": "13800000000",
+			"utag": "xxxxxx",
+			"uid": "xxxxxx",
+			"nickname": "宝贝家长",
+			"nicknameMt": null,
+			"avatar": "https://static.ukids.cn/webapi/img/generaxxxxxx.png",
+			"sign": null,
+			"signMt": null,
+			"role": null,
+			"vip": 1,
+			"vipReal": 1,
+			"svip": 1,
+			"vipEnd": "2026-01-05",
+			"vipEndReal": "2026-01-05",
+			"svipEnd": "2026-01-05",
+			"type": 1,
+			"typeReal": 1,
+			"svipType": 1,
+			"vipTotal": 7,
+			"svipTotal": 7,
+			"vipEffect": 6,
+			"svipEffect": 6,
+			"rgtDays": 2,
+			"created": "2025-12-30 00:00:00",
+			"mine": null,
+			"binds": null
+		},
+		"hasNew": false,
+		"hasChild": true,
+		"udInfo": {
+			"topLimit": false,
+			"msg": null
+		}
+	},
+	"error": null,
+	"page": null,
+	"curtime": 1767168956810
+}
