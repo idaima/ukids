@@ -6,6 +6,7 @@
 
 import json
 import os
+import shutil
 import time
 from datetime import datetime
 from typing import Any
@@ -13,6 +14,199 @@ from typing import Any
 from auth import authenticate
 from api import VideoAPI, get_lang_name
 from config import LANG_MAP
+
+
+def get_terminal_width() -> int:
+    """获取终端宽度"""
+    try:
+        return shutil.get_terminal_size().columns
+    except Exception:
+        return 80
+
+def get_display_width(text: str) -> int:
+    """
+    计算字符串在终端中的显示宽度
+    中文等全角字符占用2个字符宽度
+    """
+    import unicodedata
+    width = 0
+    for char in text:
+        # 获取字符的东亚宽度属性
+        ea_width = unicodedata.east_asian_width(char)
+        if ea_width in ('F', 'W'):  # Fullwidth 或 Wide
+            width += 2
+        else:
+            width += 1
+    return width
+
+
+def truncate_text(text: str, max_width: int) -> str:
+    """截断文本以适应指定的显示宽度"""
+    import unicodedata
+    
+    # 先计算总宽度，如果不需要截断则直接返回
+    total_width = get_display_width(text)
+    if total_width <= max_width:
+        return text
+    
+    # 需要截断时，逐字符计算
+    current_width = 0
+    result = []
+    
+    for char in text:
+        ea_width = unicodedata.east_asian_width(char)
+        char_width = 2 if ea_width in ('F', 'W') else 1
+        
+        if current_width + char_width > max_width - 2:
+            result.append("..")
+            break
+        result.append(char)
+        current_width += char_width
+    
+    return "".join(result)
+
+
+def pad_to_width(text: str, target_width: int, align: str = 'left') -> str:
+    """
+    将文本填充到指定的显示宽度
+    
+    Args:
+        text: 要填充的文本
+        target_width: 目标显示宽度
+        align: 对齐方式 ('left', 'right', 'center')
+    """
+    current_width = get_display_width(text)
+    padding = target_width - current_width
+    
+    if padding <= 0:
+        return text
+    
+    if align == 'right':
+        return ' ' * padding + text
+    elif align == 'center':
+        left_pad = padding // 2
+        right_pad = padding - left_pad
+        return ' ' * left_pad + text + ' ' * right_pad
+    else:  # left
+        return text + ' ' * padding
+
+
+def display_animations_table(animations: list[dict[str, Any]], lang_filter: int = None) -> None:
+    """
+    以表格形式显示动画列表
+    
+    Args:
+        animations: 动画列表
+        lang_filter: 语言过滤器（可选）
+    """
+    if not animations:
+        print("没有动画数据可显示")
+        return
+    
+    terminal_width = get_terminal_width()
+    
+    # 定义列宽
+    col_no = 6          # 序号列宽度
+    col_name = max(30, terminal_width - col_no - 5)  # 名称列宽度
+    
+    # 打印表头分隔线
+    header_sep = "+" + "-" * col_no + "+" + "-" * col_name + "+"
+    
+    print()
+    print(header_sep)
+    print("|" + pad_to_width("序号", col_no, 'center') + "|" + pad_to_width("动画名称", col_name, 'center') + "|")
+    print(header_sep)
+    
+    # 打印数据行
+    for i, animation in enumerate(animations):
+        no = str(i + 1)
+        name = animation.get("name", "未知")
+        
+        # 截断名称以适应列宽（留出左右各1个空格的边距）
+        name_display = truncate_text(name, col_name - 2)
+        
+        # 格式化序号（右对齐，留边距）
+        no_cell = pad_to_width(no, col_no - 2, 'right')
+        # 格式化名称（左对齐，留边距）
+        name_cell = pad_to_width(name_display, col_name - 2, 'left')
+        
+        print(f"| {no_cell} | {name_cell} |")
+    
+    print(header_sep)
+    print(f"\n共 {len(animations)} 个动画")
+
+
+def select_animations(animations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    让用户选择要下载的动画（支持多选）
+    
+    Args:
+        animations: 动画列表
+        
+    Returns:
+        选中的动画列表
+    """
+    if not animations:
+        return []
+    
+    print("\n请输入要下载的动画序号（多个序号用空格分隔，输入 0 表示全部，直接回车取消）:")
+    print("示例: 1 3 5  或  1-5  或  0")
+    
+    user_input = input("\n请输入: ").strip()
+    
+    if not user_input:
+        print("已取消选择")
+        return []
+    
+    selected_indices = set()
+    
+    # 解析用户输入
+    parts = user_input.split()
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+            
+        # 检查是否为 "0" 表示全部
+        if part == "0":
+            return animations.copy()
+        
+        # 检查是否为范围格式 (如 1-5)
+        if "-" in part:
+            try:
+                start, end = part.split("-")
+                start = int(start.strip())
+                end = int(end.strip())
+                for idx in range(start, end + 1):
+                    if 1 <= idx <= len(animations):
+                        selected_indices.add(idx - 1)
+            except ValueError:
+                print(f"警告: 无效的范围格式 '{part}'，已忽略")
+                continue
+        else:
+            # 单个序号
+            try:
+                idx = int(part)
+                if 1 <= idx <= len(animations):
+                    selected_indices.add(idx - 1)
+                else:
+                    print(f"警告: 序号 {idx} 超出范围，已忽略")
+            except ValueError:
+                print(f"警告: 无效的序号 '{part}'，已忽略")
+                continue
+    
+    if not selected_indices:
+        print("没有选择任何动画")
+        return []
+    
+    # 按序号排序并返回选中的动画
+    selected = [animations[i] for i in sorted(selected_indices)]
+    
+    print(f"\n已选择 {len(selected)} 个动画:")
+    for i, anim in enumerate(selected):
+        print(f"  {i + 1}. {anim.get('name', '未知')}")
+    
+    return selected
 
 
 # 输出目录
@@ -202,13 +396,6 @@ def run_all_animations_mode(api: VideoAPI):
     else:
         lang_filters = [0, 2]
     
-    # 选择处理数量
-    limit_input = input("请输入要处理的动画数量 (输入 0 表示全部, 默认 3): ").strip() or "3"
-    try:
-        limit = int(limit_input)
-    except ValueError:
-        limit = 3
-    
     success_count = 0
     fail_count = 0
     failed_list = []
@@ -223,13 +410,19 @@ def run_all_animations_mode(api: VideoAPI):
             print("没有获取到动画列表")
             continue
         
-        if limit > 0:
-            animations = animations[:limit]
+        # 以表格形式显示动画列表
+        display_animations_table(animations)
         
-        print(f"\n将处理 {len(animations)} 个动画\n")
+        # 让用户选择要下载的动画
+        selected_animations = select_animations(animations)
+        if not selected_animations:
+            print("跳过当前语言类型")
+            continue
         
-        for i, animation in enumerate(animations):
-            print(f"\n[{i+1}/{len(animations)}]", end="")
+        print(f"\n将处理 {len(selected_animations)} 个动画\n")
+        
+        for i, animation in enumerate(selected_animations):
+            print(f"\n[{i+1}/{len(selected_animations)}]")
             success, failed_info = process_animation(api, animation, OUTPUT_DIR_ALL)
             if success:
                 success_count += 1
@@ -301,13 +494,6 @@ def run_age_animations_mode(api: VideoAPI):
     else:
         lang_filters = [0, 2]
     
-    # 选择处理数量
-    limit_input = input("请输入要处理的动画数量 (输入 0 表示全部, 默认 3): ").strip() or "3"
-    try:
-        limit = int(limit_input)
-    except ValueError:
-        limit = 3
-    
     success_count = 0
     fail_count = 0
     failed_list = []
@@ -322,13 +508,19 @@ def run_age_animations_mode(api: VideoAPI):
             print("没有获取到分龄动画列表")
             continue
         
-        if limit > 0:
-            animations = animations[:limit]
+        # 以表格形式显示动画列表
+        display_animations_table(animations)
         
-        print(f"\n将处理 {len(animations)} 个动画\n")
+        # 让用户选择要下载的动画
+        selected_animations = select_animations(animations)
+        if not selected_animations:
+            print("跳过当前语言类型")
+            continue
         
-        for i, animation in enumerate(animations):
-            print(f"\n[{i+1}/{len(animations)}]", end="")
+        print(f"\n将处理 {len(selected_animations)} 个动画\n")
+        
+        for i, animation in enumerate(selected_animations):
+            print(f"\n[{i+1}/{len(selected_animations)}]")
             success, failed_info = process_animation(
                 api, animation, OUTPUT_DIR_AGE, age_name=selected_age_name
             )

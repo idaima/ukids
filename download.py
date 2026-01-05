@@ -6,9 +6,20 @@ M3U8 视频下载器 - 下载 m3u8 视频的 ts 片段和字幕文件
 import json
 import os
 import re
+import shutil
+import sys
+import time
 import requests
 from typing import Any
 from urllib.parse import urljoin
+
+
+def get_terminal_width() -> int:
+    """获取终端宽度"""
+    try:
+        return shutil.get_terminal_size().columns
+    except Exception:
+        return 80
 
 
 def ensure_dir(path: str):
@@ -17,7 +28,68 @@ def ensure_dir(path: str):
         os.makedirs(path)
 
 
-def download_file(url: str, filepath: str, show_error: bool = True) -> bool:
+def format_size(size_bytes: int) -> str:
+    """格式化文件大小"""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    elif size_bytes < 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    else:
+        return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
+
+
+def create_progress_bar(current: int, total: int, width: int = 30, 
+                       prefix: str = "", suffix: str = "") -> str:
+    """
+    创建进度条字符串
+    
+    Args:
+        current: 当前进度
+        total: 总数
+        width: 进度条宽度
+        prefix: 前缀文字
+        suffix: 后缀文字
+    """
+    if total == 0:
+        percent = 100
+    else:
+        percent = (current / total) * 100
+    
+    filled = int(width * current / total) if total > 0 else width
+    bar = "█" * filled + "░" * (width - filled)
+    
+    return f"{prefix}[{bar}] {current}/{total} ({percent:.1f}%){suffix}"
+
+
+def print_progress(current: int, total: int, prefix: str = "", 
+                  extra_info: str = "", newline: bool = False):
+    """
+    打印进度信息（覆盖当前行）
+    
+    Args:
+        current: 当前进度
+        total: 总数
+        prefix: 前缀
+        extra_info: 额外信息
+        newline: 是否换行
+    """
+    bar = create_progress_bar(current, total, width=25, prefix=prefix)
+    if extra_info:
+        bar += f" {extra_info}"
+    
+    # 清除当前行并打印
+    terminal_width = get_terminal_width()
+    bar = bar[:terminal_width - 1]  # 确保不超过终端宽度
+    
+    if newline:
+        print(f"\r{bar:<{terminal_width}}")
+    else:
+        print(f"\r{bar:<{terminal_width}}", end="", flush=True)
+
+
+def download_file(url: str, filepath: str, show_error: bool = True) -> tuple[bool, int]:
     """
     下载文件到指定路径
     
@@ -27,20 +99,22 @@ def download_file(url: str, filepath: str, show_error: bool = True) -> bool:
         show_error: 是否显示错误信息
         
     Returns:
-        bool: 是否成功
+        tuple: (是否成功, 文件大小)
     """
     try:
         response = requests.get(url, stream=True, timeout=60)
         response.raise_for_status()
         
+        size = 0
         with open(filepath, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
-        return True
+                size += len(chunk)
+        return True, size
     except Exception as e:
         if show_error:
-            print(f"      ✗ 下载失败: {e}")
-        return False
+            print(f"\n      ✗ 下载失败: {e}")
+        return False, 0
 
 
 def parse_m3u8(m3u8_url: str) -> list[str]:
@@ -71,11 +145,11 @@ def parse_m3u8(m3u8_url: str) -> list[str]:
         
         return ts_urls
     except Exception as e:
-        print(f"    ✗ 解析 m3u8 失败: {e}")
+        print(f"\n    ✗ 解析 m3u8 失败: {e}")
         return []
 
 
-def download_ts_segments(ts_urls: list[str], ts_dir: str, name_prefix: str = "segment") -> int:
+def download_ts_segments(ts_urls: list[str], ts_dir: str, name_prefix: str = "segment") -> tuple[int, int, int]:
     """
     下载所有 ts 片段到指定目录
     
@@ -85,11 +159,14 @@ def download_ts_segments(ts_urls: list[str], ts_dir: str, name_prefix: str = "se
         name_prefix: ts 文件名前缀
         
     Returns:
-        int: 成功下载的数量
+        tuple: (成功下载数量, 跳过数量, 总下载大小)
     """
     ensure_dir(ts_dir)
     success_count = 0
+    skipped_count = 0
+    total_size = 0
     total = len(ts_urls)
+    start_time = time.time()
     
     for i, url in enumerate(ts_urls):
         ts_path = os.path.join(ts_dir, f"{name_prefix}_{i:05d}.ts")
@@ -97,23 +174,43 @@ def download_ts_segments(ts_urls: list[str], ts_dir: str, name_prefix: str = "se
         # 检查是否已存在
         if os.path.exists(ts_path):
             success_count += 1
+            skipped_count += 1
+            # 获取已存在文件的大小
+            total_size += os.path.getsize(ts_path)
+            print_progress(i + 1, total, prefix="      ", 
+                          extra_info=f"已跳过: {skipped_count}")
             continue
         
-        if download_file(url, ts_path, show_error=False):
+        # 下载文件
+        success, size = download_file(url, ts_path, show_error=False)
+        if success:
             success_count += 1
+            total_size += size
         
-        # 进度显示
-        if (i + 1) % 20 == 0 or i + 1 == total:
-            print(f"      下载进度: {i + 1}/{total} (成功: {success_count})")
+        # 计算下载速度
+        elapsed = time.time() - start_time
+        if elapsed > 0 and total_size > 0:
+            speed = total_size / elapsed
+            speed_str = f"{format_size(int(speed))}/s"
+        else:
+            speed_str = "计算中..."
+        
+        # 显示进度
+        extra = f"成功: {success_count} | 大小: {format_size(total_size)} | 速度: {speed_str}"
+        print_progress(i + 1, total, prefix="      ", extra_info=extra)
     
-    return success_count
+    # 完成后换行
+    print()
+    
+    return success_count, skipped_count, total_size
 
 
 def download_subtitle(subtitle_url: str, save_path: str) -> bool:
     """下载字幕文件"""
     if not subtitle_url:
         return False
-    return download_file(subtitle_url, save_path)
+    success, _ = download_file(subtitle_url, save_path, show_error=False)
+    return success
 
 
 def sanitize_filename(name: str) -> str:
@@ -121,7 +218,8 @@ def sanitize_filename(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]', '_', name)
 
 
-def process_episode(episode: dict[str, Any], episode_dir: str, index: int) -> bool:
+def process_episode(episode: dict[str, Any], episode_dir: str, index: int, 
+                   episode_num: int, total_episodes: int) -> tuple[bool, int]:
     """
     处理单个剧集：下载 ts 片段和字幕
     
@@ -129,9 +227,11 @@ def process_episode(episode: dict[str, Any], episode_dir: str, index: int) -> bo
         episode: 剧集数据
         episode_dir: 剧集保存目录
         index: 剧集索引
+        episode_num: 当前剧集编号（用于显示）
+        total_episodes: 总剧集数
         
     Returns:
-        bool: 是否成功
+        tuple: (是否成功, 下载大小)
     """
     play_url = episode.get("playUrl", "")
     subtitle_url = episode.get("subtitleUrl", "")
@@ -149,41 +249,50 @@ def process_episode(episode: dict[str, Any], episode_dir: str, index: int) -> bo
     # 检查标记文件，判断是否已完成下载
     done_marker = os.path.join(episode_path, ".download_complete")
     if os.path.exists(done_marker):
-        print(f"    ⏭ 已完成，跳过: {episode_name}")
-        return True
+        print(f"  [{episode_num}/{total_episodes}] ⏭ 已完成，跳过: {title}")
+        return True, 0
     
     if not play_url:
-        print(f"    ✗ 缺少播放地址: {title}")
-        return False
+        print(f"  [{episode_num}/{total_episodes}] ✗ 缺少播放地址: {title}")
+        return False, 0
     
-    print(f"    ▶ 下载: {title}")
+    print(f"\n  [{episode_num}/{total_episodes}] ▶ {title}")
     
     ensure_dir(episode_path)
     
     # 解析 m3u8
     ts_urls = parse_m3u8(play_url)
     if not ts_urls:
-        return False
+        return False, 0
     
-    print(f"      发现 {len(ts_urls)} 个片段")
+    print(f"    📦 共 {len(ts_urls)} 个片段")
     
     # 下载 ts 片段
-    success_count = download_ts_segments(ts_urls, ts_dir, name_prefix=episode_name)
+    success_count, skipped_count, total_size = download_ts_segments(
+        ts_urls, ts_dir, name_prefix=episode_name
+    )
     
     if success_count == 0:
-        print(f"      ✗ 下载 ts 片段失败")
-        return False
+        print(f"    ✗ 下载 ts 片段失败")
+        return False, 0
+    
+    # 显示下载统计
+    new_downloads = success_count - skipped_count
+    print(f"    📊 统计: 成功 {success_count}/{len(ts_urls)} | "
+          f"新下载 {new_downloads} | 跳过 {skipped_count} | "
+          f"大小 {format_size(total_size)}")
     
     if success_count < len(ts_urls):
-        print(f"      ⚠ 部分片段下载失败: {success_count}/{len(ts_urls)}")
+        failed = len(ts_urls) - success_count
+        print(f"    ⚠ {failed} 个片段下载失败")
     
     # 下载字幕
     if subtitle_url:
         subtitle_path = os.path.join(episode_path, f"{episode_name}_subtitle.srt")
         if download_subtitle(subtitle_url, subtitle_path):
-            print(f"      ✓ 字幕已下载")
+            print(f"    📝 字幕已下载")
         else:
-            print(f"      ⚠ 字幕下载失败")
+            print(f"    ⚠ 字幕下载失败")
     
     # 保存元数据
     meta_path = os.path.join(episode_path, "meta.json")
@@ -193,7 +302,8 @@ def process_episode(episode: dict[str, Any], episode_dir: str, index: int) -> bo
         "play_url": play_url,
         "subtitle_url": subtitle_url,
         "ts_count": len(ts_urls),
-        "ts_downloaded": success_count
+        "ts_downloaded": success_count,
+        "total_size": total_size
     }
     with open(meta_path, 'w', encoding='utf-8') as f:
         json.dump(meta_data, f, ensure_ascii=False, indent=2)
@@ -202,48 +312,68 @@ def process_episode(episode: dict[str, Any], episode_dir: str, index: int) -> bo
     if success_count == len(ts_urls):
         with open(done_marker, 'w') as f:
             f.write("done")
-        print(f"      ✓ 下载完成: {episode_name}")
+        print(f"    ✓ 下载完成")
     
-    return True
+    return True, total_size
 
 
-def process_json_file(json_path: str, downloads_base_dir: str) -> tuple[int, int]:
+def process_json_file(json_path: str, downloads_base_dir: str, 
+                     file_num: int = 1, total_files: int = 1) -> tuple[int, int, int]:
     """
     处理单个 JSON 文件，下载所有视频
     
     Args:
         json_path: JSON 文件路径
         downloads_base_dir: 下载目录基础路径
+        file_num: 当前文件编号
+        total_files: 总文件数
         
     Returns:
-        tuple: (成功数, 失败数)
+        tuple: (成功数, 失败数, 总下载大小)
     """
     json_name = os.path.splitext(os.path.basename(json_path))[0]
     output_dir = os.path.join(downloads_base_dir, json_name)
     ensure_dir(output_dir)
     
-    print(f"\n处理: {json_name}")
-    print(f"  输出目录: {output_dir}")
+    print(f"\n{'=' * 60}")
+    print(f"📁 [{file_num}/{total_files}] {json_name}")
+    print(f"   输出目录: {output_dir}")
+    print("=" * 60)
     
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
             episodes = json.load(f)
     except Exception as e:
         print(f"  ✗ 读取 JSON 失败: {e}")
-        return 0, 0
+        return 0, 0, 0
     
-    print(f"  共 {len(episodes)} 集")
+    total_episodes = len(episodes)
+    print(f"  📺 共 {total_episodes} 集待处理")
     
     success = 0
     fail = 0
+    total_size = 0
     
     for i, episode in enumerate(episodes):
-        if process_episode(episode, output_dir, i + 1):
+        ep_success, ep_size = process_episode(
+            episode, output_dir, i + 1, 
+            episode_num=i + 1, total_episodes=total_episodes
+        )
+        if ep_success:
             success += 1
         else:
             fail += 1
+        total_size += ep_size
     
-    return success, fail
+    # 文件处理完成统计
+    print(f"\n  {'─' * 50}")
+    print(f"  📊 {json_name} 下载统计:")
+    print(f"     ✓ 成功: {success} 集")
+    if fail > 0:
+        print(f"     ✗ 失败: {fail} 集")
+    print(f"     💾 总大小: {format_size(total_size)}")
+    
+    return success, fail, total_size
 
 
 def get_json_files(source_dir: str) -> list[str]:
@@ -255,15 +385,15 @@ def get_json_files(source_dir: str) -> list[str]:
 
 def main():
     """主函数"""
-    print("=" * 50)
-    print("  M3U8 视频下载器 (仅下载 ts 和字幕)")
-    print("=" * 50)
-    print("提示: 下载完成后使用 merge_ts.py 进行合并")
+    print("=" * 60)
+    print("  📥 M3U8 视频下载器 (仅下载 ts 和字幕)")
+    print("=" * 60)
+    print("  提示: 下载完成后使用 merge_ts.py 进行合并")
     
     # 选择来源模式
     print("\n选择 JSON 文件来源:")
-    print("  1. 全部动画 (output/ 目录)")
-    print("  2. 分龄动画 (output_age/ 目录)")
+    print("  1. 全部动画 (outputs/all 目录)")
+    print("  2. 分龄动画 (outputs/age 目录)")
     print("  3. 全部 (两个目录)")
     
     mode_choice = input("请输入选项 (1/2/3, 默认 1): ").strip() or "1"
@@ -278,6 +408,8 @@ def main():
     
     total_success = 0
     total_fail = 0
+    total_size = 0
+    start_time = time.time()
     
     for source_dir, downloads_dir in sources:
         json_files = get_json_files(source_dir)
@@ -286,10 +418,10 @@ def main():
             print(f"\n✗ {source_dir}/ 目录不存在或没有 JSON 文件")
             continue
         
-        print(f"\n{'=' * 50}")
-        print(f"  来源目录: {source_dir}/")
-        print(f"  下载目录: {downloads_dir}/")
-        print("=" * 50)
+        print(f"\n{'=' * 60}")
+        print(f"  📂 来源目录: {source_dir}/")
+        print(f"  💾 下载目录: {downloads_dir}/")
+        print("=" * 60)
         
         print(f"\n找到 {len(json_files)} 个 JSON 文件:")
         for i, f in enumerate(json_files, 1):
@@ -297,6 +429,7 @@ def main():
         
         print("\n选择要下载的文件:")
         print("  输入数字选择单个文件 (如: 1)")
+        print("  输入多个数字用空格分隔 (如: 1 3 5)")
         print("  输入 'all' 下载全部")
         print("  输入 'skip' 跳过此目录")
         choice = input("请输入选择: ").strip().lower()
@@ -308,31 +441,62 @@ def main():
         if choice == 'all':
             selected_files = json_files
         else:
-            try:
-                idx = int(choice) - 1
-                if 0 <= idx < len(json_files):
-                    selected_files = [json_files[idx]]
-                else:
-                    print("✗ 无效选择，跳过")
-                    continue
-            except ValueError:
-                print("✗ 无效输入，跳过")
+            # 支持多选
+            selected_files = []
+            parts = choice.split()
+            for part in parts:
+                try:
+                    idx = int(part) - 1
+                    if 0 <= idx < len(json_files):
+                        if json_files[idx] not in selected_files:
+                            selected_files.append(json_files[idx])
+                    else:
+                        print(f"  ⚠ 序号 {part} 超出范围，已忽略")
+                except ValueError:
+                    print(f"  ⚠ 无效输入 '{part}'，已忽略")
+            
+            if not selected_files:
+                print("✗ 没有选择有效文件，跳过")
                 continue
         
         ensure_dir(downloads_dir)
         
-        for json_file in selected_files:
+        print(f"\n📋 将下载 {len(selected_files)} 个文件")
+        
+        for file_idx, json_file in enumerate(selected_files, 1):
             json_path = os.path.join(source_dir, json_file)
-            success, fail = process_json_file(json_path, downloads_dir)
+            success, fail, size = process_json_file(
+                json_path, downloads_dir, 
+                file_num=file_idx, total_files=len(selected_files)
+            )
             total_success += success
             total_fail += fail
+            total_size += size
     
-    print("\n" + "=" * 50)
-    print(f"  下载完成!")
-    print(f"  成功: {total_success} 个视频")
-    print(f"  失败: {total_fail} 个视频")
-    print("\n  提示: 使用 python merge_ts.py 合并视频")
-    print("=" * 50)
+    # 计算总用时
+    elapsed = time.time() - start_time
+    hours = int(elapsed // 3600)
+    minutes = int((elapsed % 3600) // 60)
+    seconds = int(elapsed % 60)
+    
+    if hours > 0:
+        time_str = f"{hours}小时 {minutes}分 {seconds}秒"
+    elif minutes > 0:
+        time_str = f"{minutes}分 {seconds}秒"
+    else:
+        time_str = f"{seconds}秒"
+    
+    # 最终统计
+    print("\n" + "=" * 60)
+    print("  🎉 下载任务完成!")
+    print("=" * 60)
+    print(f"  ✓ 成功: {total_success} 个视频")
+    if total_fail > 0:
+        print(f"  ✗ 失败: {total_fail} 个视频")
+    print(f"  💾 总大小: {format_size(total_size)}")
+    print(f"  ⏱ 总用时: {time_str}")
+    print("\n  💡 提示: 使用 python merge_ts.py 合并视频")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
