@@ -1,6 +1,7 @@
 """
 M3U8 视频下载器 - 下载 m3u8 视频的 ts 片段和字幕文件
 不进行合并操作，合并操作由 merge_ts.py 单独处理
+支持多线程并发下载
 """
 
 import json
@@ -9,9 +10,61 @@ import re
 import shutil
 import sys
 import time
+import threading
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 from urllib.parse import urljoin
+
+
+# 并发下载配置 - 根据 CPU 核心数动态计算
+# I/O 密集型任务可使用较多线程，这里使用 CPU 核心数的 2 倍
+# 最小 4 个线程，最大 16 个线程
+_cpu_count = os.cpu_count() or 4
+MAX_WORKERS = min(max(_cpu_count * 2, 4), 16)
+
+
+class DownloadStats:
+    """线程安全的下载统计类"""
+    def __init__(self, total: int):
+        self.total = total
+        self.completed = 0
+        self.success = 0
+        self.skipped = 0
+        self.failed = 0
+        self.total_size = 0
+        self.start_time = time.time()
+        self._lock = threading.Lock()
+    
+    def add_success(self, size: int, skipped: bool = False):
+        """添加成功下载"""
+        with self._lock:
+            self.completed += 1
+            self.success += 1
+            self.total_size += size
+            if skipped:
+                self.skipped += 1
+    
+    def add_failure(self):
+        """添加下载失败"""
+        with self._lock:
+            self.completed += 1
+            self.failed += 1
+    
+    def get_stats(self) -> dict:
+        """获取当前统计数据"""
+        with self._lock:
+            elapsed = time.time() - self.start_time
+            speed = self.total_size / elapsed if elapsed > 0 else 0
+            return {
+                'completed': self.completed,
+                'total': self.total,
+                'success': self.success,
+                'skipped': self.skipped,
+                'failed': self.failed,
+                'total_size': self.total_size,
+                'speed': speed
+            }
 
 
 def get_terminal_width() -> int:
@@ -25,7 +78,7 @@ def get_terminal_width() -> int:
 def ensure_dir(path: str):
     """确保目录存在"""
     if not os.path.exists(path):
-        os.makedirs(path)
+        os.makedirs(path, exist_ok=True)
 
 
 def format_size(size_bytes: int) -> str:
@@ -149,9 +202,31 @@ def parse_m3u8(m3u8_url: str) -> list[str]:
         return []
 
 
+def download_single_ts(args: tuple) -> tuple[int, bool, int]:
+    """
+    下载单个 ts 片段（供线程池调用）
+    
+    Args:
+        args: (index, url, ts_path) 元组
+        
+    Returns:
+        tuple: (索引, 是否成功, 文件大小)
+    """
+    index, url, ts_path = args
+    
+    # 检查是否已存在
+    if os.path.exists(ts_path):
+        size = os.path.getsize(ts_path)
+        return (index, True, size, True)  # True 表示是跳过的
+    
+    # 下载文件
+    success, size = download_file(url, ts_path, show_error=False)
+    return (index, success, size, False)
+
+
 def download_ts_segments(ts_urls: list[str], ts_dir: str, name_prefix: str = "segment") -> tuple[int, int, int]:
     """
-    下载所有 ts 片段到指定目录
+    并发下载所有 ts 片段到指定目录
     
     Args:
         ts_urls: ts 片段 URL 列表
@@ -162,47 +237,51 @@ def download_ts_segments(ts_urls: list[str], ts_dir: str, name_prefix: str = "se
         tuple: (成功下载数量, 跳过数量, 总下载大小)
     """
     ensure_dir(ts_dir)
-    success_count = 0
-    skipped_count = 0
-    total_size = 0
     total = len(ts_urls)
-    start_time = time.time()
     
+    if total == 0:
+        return 0, 0, 0
+    
+    # 创建下载统计
+    stats = DownloadStats(total)
+    
+    # 准备下载任务
+    tasks = []
     for i, url in enumerate(ts_urls):
         ts_path = os.path.join(ts_dir, f"{name_prefix}_{i:05d}.ts")
+        tasks.append((i, url, ts_path))
+    
+    # 进度显示函数
+    def show_progress():
+        s = stats.get_stats()
+        speed_str = f"{format_size(int(s['speed']))}/s" if s['speed'] > 0 else "计算中..."
+        extra = f"成功: {s['success']} | 跳过: {s['skipped']} | 大小: {format_size(s['total_size'])} | 速度: {speed_str}"
+        print_progress(s['completed'], s['total'], prefix="      ", extra_info=extra)
+    
+    # 使用线程池并发下载
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        # 提交所有任务
+        futures = {executor.submit(download_single_ts, task): task for task in tasks}
         
-        # 检查是否已存在
-        if os.path.exists(ts_path):
-            success_count += 1
-            skipped_count += 1
-            # 获取已存在文件的大小
-            total_size += os.path.getsize(ts_path)
-            print_progress(i + 1, total, prefix="      ", 
-                          extra_info=f"已跳过: {skipped_count}")
-            continue
-        
-        # 下载文件
-        success, size = download_file(url, ts_path, show_error=False)
-        if success:
-            success_count += 1
-            total_size += size
-        
-        # 计算下载速度
-        elapsed = time.time() - start_time
-        if elapsed > 0 and total_size > 0:
-            speed = total_size / elapsed
-            speed_str = f"{format_size(int(speed))}/s"
-        else:
-            speed_str = "计算中..."
-        
-        # 显示进度
-        extra = f"成功: {success_count} | 大小: {format_size(total_size)} | 速度: {speed_str}"
-        print_progress(i + 1, total, prefix="      ", extra_info=extra)
+        # 处理完成的任务
+        for future in as_completed(futures):
+            try:
+                index, success, size, skipped = future.result()
+                if success:
+                    stats.add_success(size, skipped=skipped)
+                else:
+                    stats.add_failure()
+            except Exception:
+                stats.add_failure()
+            
+            # 更新进度显示
+            show_progress()
     
     # 完成后换行
     print()
     
-    return success_count, skipped_count, total_size
+    s = stats.get_stats()
+    return s['success'], s['skipped'], s['total_size']
 
 
 def download_subtitle(subtitle_url: str, save_path: str) -> bool:
@@ -388,7 +467,8 @@ def main():
     print("=" * 60)
     print("  📥 M3U8 视频下载器 (仅下载 ts 和字幕)")
     print("=" * 60)
-    print("  提示: 下载完成后使用 merge_ts.py 进行合并")
+    print(f"  🚀 并发线程数: {MAX_WORKERS} (CPU核心数: {_cpu_count})")
+    print("  💡 提示: 下载完成后使用 merge_ts.py 进行合并")
     
     # 选择来源模式
     print("\n选择 JSON 文件来源:")
