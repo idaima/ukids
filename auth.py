@@ -74,8 +74,8 @@ def login_with_sms(mobile: str, verify_code: str) -> str | None:
             if token:
                 user = result.get("data", {}).get("user", {})
                 print(f"✓ 登录成功! 欢迎 {user.get('nickname', '用户')}")
-                print(f"  VIP状态: {'是' if user.get('vip') else '否'}")
-                print(f"  VIP到期: {user.get('vipEnd', '无')}")
+                print(f"  VIP状态: {'是' if user.get('vipReal',0) == 1 else '否'}")
+                print(f"  VIP到期: {user.get('vipEndReal', '无')}")
                 return token
             else:
                 print("✗ 登录成功但未获取到 token")

@@ -192,12 +192,16 @@ def process_season_dir(season_dir: str, embed_subtitle: bool = True) -> tuple[in
     """
     season_name = os.path.basename(season_dir)
     
-    # MP4 输出到同级的 mp4 目录
-    mp4_dir = os.path.join(season_dir, "mp4")
+    # MP4 输出到同级目录，根据是否嵌入字幕区分
+    if embed_subtitle:
+        mp4_dir = os.path.join(season_dir, "mp4")
+    else:
+        mp4_dir = os.path.join(season_dir, "mp4_nosub")
     os.makedirs(mp4_dir, exist_ok=True)
     
     print(f"\n处理: {season_name}")
-    print(f"  输出目录: {mp4_dir}")
+    subtitle_status = "嵌入字幕" if embed_subtitle else "不嵌入字幕"
+    print(f"  输出目录: {mp4_dir} ({subtitle_status})")
     
     episode_dirs = get_episode_dirs(season_dir)
     if not episode_dirs:
