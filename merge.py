@@ -1,12 +1,100 @@
 """
 TS 视频合并工具 - 将下载的 ts 片段合并为 MP4 视频
 使用 ffmpeg 进行合并，可选嵌入字幕
+支持 Windows/macOS/Linux 跨平台
 """
 
 import json
 import os
+import platform
 import subprocess
 from pathlib import Path
+
+
+def get_platform_info() -> dict:
+    """
+    获取当前平台信息
+    
+    Returns:
+        dict: 包含平台名称和是否为 Windows
+    """
+    system = platform.system().lower()
+    return {
+        'system': system,
+        'is_windows': system == 'windows',
+        'is_macos': system == 'darwin',
+        'is_linux': system == 'linux'
+    }
+
+
+def escape_subtitle_path(subtitle_path: str, platform_info: dict) -> str:
+    """
+    根据平台转义字幕路径，用于 ffmpeg subtitles 滤镜
+    
+    Args:
+        subtitle_path: 原始字幕路径
+        platform_info: 平台信息
+        
+    Returns:
+        str: 转义后的路径
+    """
+    if platform_info['is_windows']:
+        # Windows 路径处理：
+        # 1. 将反斜杠替换为正斜杠
+        # 2. 转义冒号（Windows 盘符如 C:）
+        # 3. 转义单引号
+        escaped = subtitle_path.replace('\\', '/')
+        escaped = escaped.replace(':', '\\:')
+        escaped = escaped.replace("'", "'\\''")
+        return escaped
+    else:
+        # macOS/Linux：只需转义单引号和冒号
+        escaped = subtitle_path.replace("'", "'\\''")
+        escaped = escaped.replace(':', '\\:')
+        return escaped
+
+
+def get_subtitle_style(platform_info: dict) -> str:
+    """
+    根据平台获取字幕样式
+    
+    Args:
+        platform_info: 平台信息
+        
+    Returns:
+        str: ffmpeg force_style 参数字符串
+    """
+    # 根据平台选择合适的中文字体
+    if platform_info['is_windows']:
+        font_name = "Microsoft YaHei"
+    elif platform_info['is_macos']:
+        font_name = "PingFang SC"
+    else:  # Linux
+        font_name = "Noto Sans CJK SC"
+    
+    # 字幕样式参数说明：
+    # FontSize=24 - 字体大小（适合 1080p，可根据视频分辨率调整）
+    # FontName - 平台对应的中文字体
+    # PrimaryColour=&HFFFFFF - 字幕颜色（白色，ASS 格式为 BGR）
+    # OutlineColour=&H000000 - 描边颜色（黑色）
+    # BackColour=&H80000000 - 背景色（半透明黑色）
+    # Outline=2 - 描边宽度
+    # Shadow=1 - 阴影
+    # MarginV=40 - 底部边距
+    # WrapStyle=0 - 智能换行（0=自动换行到行尾）
+    style = (
+        f"FontSize=24,"
+        f"FontName={font_name},"
+        f"PrimaryColour=&HFFFFFF,"
+        f"OutlineColour=&H000000,"
+        f"BackColour=&H80000000,"
+        f"Outline=2,"
+        f"Shadow=1,"
+        f"MarginV=40,"
+        f"WrapStyle=0"
+    )
+    
+    return style
 
 
 def check_ffmpeg() -> bool:
@@ -86,6 +174,9 @@ def merge_ts_to_mp4(episode_dir: str, output_dir: str, embed_subtitle: bool = Tr
     
     print(f"  ▶ 合并: {episode_name} ({len(ts_files)} 个片段)")
     
+    # 获取平台信息
+    platform_info = get_platform_info()
+    
     try:
         # 步骤1：将所有 ts 文件二进制拼接
         combined_ts = os.path.join(episode_dir, "combined.ts")
@@ -100,50 +191,34 @@ def merge_ts_to_mp4(episode_dir: str, output_dir: str, embed_subtitle: bool = Tr
         has_subtitle = embed_subtitle and os.path.exists(subtitle_path)
         
         if has_subtitle:
-            # 步骤2：编码视频
-            temp_video = os.path.join(episode_dir, "temp_video.mp4")
-            print(f"    编码视频...")
+            # 使用硬编码字幕 - 直接将字幕烧录到视频画面中
+            # 这样可以保证字幕大小、样式在所有平台和播放器上一致显示
+            print(f"    编码视频并硬编码字幕...")
             
-            cmd1 = [
+            # 获取平台相关的路径转义和字幕样式
+            escaped_subtitle = escape_subtitle_path(subtitle_path, platform_info)
+            subtitle_style = get_subtitle_style(platform_info)
+            
+            # 构建 subtitles 滤镜参数
+            # 使用绝对路径并应用 force_style 覆盖默认样式
+            subtitle_filter = f"subtitles='{escaped_subtitle}':force_style='{subtitle_style}'"
+            
+            cmd = [
                 'ffmpeg', '-y',
                 '-i', combined_ts,
+                '-vf', subtitle_filter,
                 '-c:v', 'libx264',
                 '-preset', 'fast',
                 '-crf', '18',
                 '-c:a', 'aac',
                 '-b:a', '192k',
                 '-movflags', '+faststart',
-                temp_video
-            ]
-            
-            result1 = subprocess.run(cmd1, capture_output=True, text=True)
-            if result1.returncode != 0:
-                print(f"    ✗ 编码失败: {result1.stderr[:200]}")
-                return False
-            
-            # 步骤3：嵌入字幕
-            print(f"    嵌入字幕...")
-            
-            cmd2 = [
-                'ffmpeg', '-y',
-                '-i', temp_video,
-                '-i', subtitle_path,
-                '-c:v', 'copy',
-                '-c:a', 'copy',
-                '-c:s', 'mov_text',
-                '-metadata:s:s:0', 'language=eng',
-                '-disposition:s:0', 'default',
                 output_path
             ]
             
-            result2 = subprocess.run(cmd2, capture_output=True, text=True)
-            
-            # 清理临时文件
-            if os.path.exists(temp_video):
-                os.remove(temp_video)
-            
-            if result2.returncode != 0:
-                print(f"    ✗ 嵌入字幕失败: {result2.stderr[:200]}")
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"    ✗ 编码失败: {result.stderr[:200]}")
                 return False
         else:
             # 无字幕：直接编码输出
