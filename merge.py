@@ -216,7 +216,7 @@ def merge_ts_to_mp4(episode_dir: str, output_dir: str, embed_subtitle: bool = Tr
                 output_path
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace')
             if result.returncode != 0:
                 print(f"    ✗ 编码失败: {result.stderr[:200]}")
                 return False
@@ -236,7 +236,7 @@ def merge_ts_to_mp4(episode_dir: str, output_dir: str, embed_subtitle: bool = Tr
                 output_path
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace')
             if result.returncode != 0:
                 print(f"    ✗ 编码失败: {result.stderr[:200]}")
                 return False
