@@ -73,24 +73,22 @@ def get_subtitle_style(platform_info: dict) -> str:
         font_name = "Noto Sans CJK SC"
     
     # 字幕样式参数说明：
-    # FontSize=24 - 字体大小（适合 1080p，可根据视频分辨率调整）
+    # FontSize=18 - 字体大小
     # FontName - 平台对应的中文字体
     # PrimaryColour=&HFFFFFF - 字幕颜色（白色，ASS 格式为 BGR）
     # OutlineColour=&H000000 - 描边颜色（黑色）
     # BackColour=&H80000000 - 背景色（半透明黑色）
     # Outline=2 - 描边宽度
-    # Shadow=1 - 阴影
-    # MarginV=40 - 底部边距
+    # MarginV=20 - 底部边距
     # WrapStyle=0 - 智能换行（0=自动换行到行尾）
     style = (
-        f"FontSize=24,"
+        f"FontSize=18,"
         f"FontName={font_name},"
         f"PrimaryColour=&HFFFFFF,"
         f"OutlineColour=&H000000,"
         f"BackColour=&H80000000,"
         f"Outline=2,"
-        f"Shadow=1,"
-        f"MarginV=40,"
+        f"MarginV=20,"
         f"WrapStyle=0"
     )
     
