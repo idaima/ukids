@@ -142,7 +142,8 @@ def get_ts_files(ts_dir: str) -> list[str]:
     return ts_files
 
 
-def merge_ts_to_mp4(episode_dir: str, output_dir: str, embed_subtitle: bool = True) -> bool:
+def merge_ts_to_mp4(episode_dir: str, output_dir: str, embed_subtitle: bool = True,
+                    progress_cb=None, cancel_cb=None) -> bool:
     """
     合并单个剧集的 ts 文件为 MP4
     
@@ -162,15 +163,37 @@ def merge_ts_to_mp4(episode_dir: str, output_dir: str, embed_subtitle: bool = Tr
     # 检查是否已存在
     if os.path.exists(output_path):
         print(f"  ⏭ 已存在，跳过: {episode_name}.mp4")
+        if progress_cb:
+            progress_cb({
+                "stage": "merge_skipped",
+                "episode": episode_name,
+                "output": output_path,
+                "message": f"已存在，跳过: {episode_name}.mp4",
+            })
         return True
     
     # 获取 ts 文件
     ts_files = get_ts_files(ts_dir)
     if not ts_files:
         print(f"  ✗ 没有找到 ts 文件: {episode_name}")
+        if progress_cb:
+            progress_cb({
+                "stage": "merge_failed",
+                "episode": episode_name,
+                "message": f"没有找到 ts 文件: {episode_name}",
+            })
         return False
-    
+
     print(f"  ▶ 合并: {episode_name} ({len(ts_files)} 个片段)")
+    if progress_cb:
+        progress_cb({
+            "stage": "merge_start",
+            "episode": episode_name,
+            "segments": len(ts_files),
+            "message": f"开始合并: {episode_name}",
+        })
+    if cancel_cb and cancel_cb():
+        return False
     
     # 获取平台信息
     platform_info = get_platform_info()
@@ -179,6 +202,12 @@ def merge_ts_to_mp4(episode_dir: str, output_dir: str, embed_subtitle: bool = Tr
         # 步骤1：将所有 ts 文件二进制拼接
         combined_ts = os.path.join(episode_dir, "combined.ts")
         print(f"    拼接 ts 文件...")
+        if progress_cb:
+            progress_cb({
+                "stage": "merge_combining",
+                "episode": episode_name,
+                "message": f"拼接 ts 文件: {episode_name}",
+            })
         
         with open(combined_ts, 'wb') as outfile:
             for ts_file in ts_files:
@@ -192,6 +221,12 @@ def merge_ts_to_mp4(episode_dir: str, output_dir: str, embed_subtitle: bool = Tr
             # 使用硬编码字幕 - 直接将字幕烧录到视频画面中
             # 这样可以保证字幕大小、样式在所有平台和播放器上一致显示
             print(f"    编码视频并硬编码字幕...")
+            if progress_cb:
+                progress_cb({
+                    "stage": "merge_encoding",
+                    "episode": episode_name,
+                    "message": f"编码视频并硬编码字幕: {episode_name}",
+                })
             
             # 获取平台相关的路径转义和字幕样式
             escaped_subtitle = escape_subtitle_path(subtitle_path, platform_info)
@@ -217,10 +252,22 @@ def merge_ts_to_mp4(episode_dir: str, output_dir: str, embed_subtitle: bool = Tr
             result = subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace')
             if result.returncode != 0:
                 print(f"    ✗ 编码失败: {result.stderr[:200]}")
+                if progress_cb:
+                    progress_cb({
+                        "stage": "merge_failed",
+                        "episode": episode_name,
+                        "message": f"编码失败: {result.stderr[:200]}",
+                    })
                 return False
         else:
             # 无字幕：直接编码输出
             print(f"    编码视频...")
+            if progress_cb:
+                progress_cb({
+                    "stage": "merge_encoding",
+                    "episode": episode_name,
+                    "message": f"编码视频: {episode_name}",
+                })
             
             cmd = [
                 'ffmpeg', '-y',
@@ -237,6 +284,12 @@ def merge_ts_to_mp4(episode_dir: str, output_dir: str, embed_subtitle: bool = Tr
             result = subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace')
             if result.returncode != 0:
                 print(f"    ✗ 编码失败: {result.stderr[:200]}")
+                if progress_cb:
+                    progress_cb({
+                        "stage": "merge_failed",
+                        "episode": episode_name,
+                        "message": f"编码失败: {result.stderr[:200]}",
+                    })
                 return False
         
         # 清理合并的 ts
@@ -245,14 +298,29 @@ def merge_ts_to_mp4(episode_dir: str, output_dir: str, embed_subtitle: bool = Tr
         
         file_size = os.path.getsize(output_path) / (1024 * 1024)
         print(f"    ✓ 完成: {episode_name}.mp4 ({file_size:.1f} MB)")
+        if progress_cb:
+            progress_cb({
+                "stage": "merge_done",
+                "episode": episode_name,
+                "output": output_path,
+                "file_size_mb": file_size,
+                "message": f"完成: {episode_name}.mp4 ({file_size:.1f} MB)",
+            })
         return True
         
     except Exception as e:
         print(f"    ✗ 合并失败: {e}")
+        if progress_cb:
+            progress_cb({
+                "stage": "merge_failed",
+                "episode": episode_name,
+                "message": f"合并失败: {e}",
+            })
         return False
 
 
-def process_season_dir(season_dir: str, embed_subtitle: bool = True) -> tuple[int, int]:
+def process_season_dir(season_dir: str, embed_subtitle: bool = True,
+                       progress_cb=None, cancel_cb=None) -> tuple[int, int]:
     """
     处理一个季目录下的所有剧集
     
@@ -282,15 +350,35 @@ def process_season_dir(season_dir: str, embed_subtitle: bool = True) -> tuple[in
         return 0, 0
     
     print(f"  发现 {len(episode_dirs)} 个剧集")
+    if progress_cb:
+        progress_cb({
+            "stage": "season_start",
+            "season": season_name,
+            "total": len(episode_dirs),
+            "message": f"开始处理季目录: {season_name}",
+        })
     
     success = 0
     fail = 0
     
-    for episode_dir in episode_dirs:
-        if merge_ts_to_mp4(episode_dir, mp4_dir, embed_subtitle):
+    for index, episode_dir in enumerate(episode_dirs, 1):
+        if cancel_cb and cancel_cb():
+            print("  ⚠ 已请求取消，停止合并后续剧集")
+            break
+        if merge_ts_to_mp4(episode_dir, mp4_dir, embed_subtitle, progress_cb=progress_cb, cancel_cb=cancel_cb):
             success += 1
         else:
             fail += 1
+        if progress_cb:
+            progress_cb({
+                "stage": "season_progress",
+                "season": season_name,
+                "done": index,
+                "total": len(episode_dirs),
+                "success": success,
+                "failed": fail,
+                "message": f"{season_name}: 已合并 {index}/{len(episode_dirs)}",
+            })
     
     return success, fail
 

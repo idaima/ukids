@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ukids GUI</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div id="appLoading" class="app-loading">
+    <div class="loader"></div>
+    <span>正在初始化...</span>
+  </div>
+
+  <section id="loginView" class="login-shell hidden" aria-label="登录页面">
+    <div class="login-bg"></div>
+    <div class="login-card md-elevated">
+      <div class="brand-mark">U</div>
+      <p class="eyebrow">本地工具 · ukids GUI</p>
+      <h1>欢迎回来</h1>
+      <p class="subtle">登录后即可采集动画元数据、下载视频片段并合并 MP4。</p>
+
+      <div id="loginAlert" class="alert hidden" role="alert"></div>
+
+      <div class="segmented" role="tablist" aria-label="登录方式">
+        <button id="smsTab" class="segment active" type="button">短信登录</button>
+        <button id="tokenTab" class="segment" type="button">Token 登录</button>
+      </div>
+
+      <div id="smsPanel" class="login-panel">
+        <label class="field">
+          <span>手机号</span>
+          <input id="mobile" inputmode="tel" autocomplete="tel" placeholder="请输入手机号" />
+          <small>用于接收 ukids 平台短信验证码。</small>
+        </label>
+        <div class="field-row">
+          <label class="field grow">
+            <span>验证码</span>
+            <input id="verifyCode" inputmode="numeric" autocomplete="one-time-code" placeholder="请输入验证码" />
+          </label>
+          <button id="sendSmsBtn" class="md-button tonal" type="button">发送验证码</button>
+        </div>
+        <button id="loginBtn" class="md-button filled full" type="button">登录并进入主页</button>
+      </div>
+
+      <div id="tokenPanel" class="login-panel hidden">
+        <label class="field">
+          <span>Token</span>
+          <textarea id="manualToken" rows="5" placeholder="粘贴已有 token"></textarea>
+          <small>适合已有 token 或短信暂不可用时使用。</small>
+        </label>
+        <button id="saveTokenBtn" class="md-button filled full" type="button">保存 Token 并进入主页</button>
+      </div>
+
+      <div class="login-footer">
+        <span class="material-dot"></span>
+        服务仅监听本机，默认访问 <code>127.0.0.1:8000</code>
+      </div>
+    </div>
+  </section>
+
+  <section id="homeView" class="home-shell hidden" aria-label="主页">
+    <aside class="nav-rail md-elevated">
+      <div class="nav-logo">U</div>
+      <button class="nav-item active" data-target="sectionOverview" type="button"><span>📊</span><small>概览</small></button>
+      <button class="nav-item" data-target="sectionLibrary" type="button"><span>🎞️</span><small>资源</small></button>
+      <button class="nav-item" data-target="sectionDownloads" type="button"><span>📦</span><small>下载</small></button>
+      <button class="nav-item" data-target="sectionMerge" type="button"><span>🎬</span><small>合并</small></button>
+      <button class="nav-item" data-target="sectionTask" type="button"><span>⚙️</span><small>任务</small></button>
+    </aside>
+
+    <main class="main-content">
+      <header class="hero md-elevated">
+        <div>
+          <p class="eyebrow">ukids 视频资源下载器</p>
+          <h1>资源采集控制台</h1>
+          <p>按流程完成：选择动画 → 生成 JSON → 下载 ts/字幕 → 合并 MP4。</p>
+        </div>
+        <div class="hero-actions">
+          <div id="tokenStatus" class="status-chip">检查登录状态...</div>
+          <button id="logoutBtn" class="md-button outlined" type="button">退出登录</button>
+        </div>
+      </header>
+
+      <div id="globalAlert" class="alert hidden" role="alert"></div>
+
+      <section id="sectionOverview" class="workspace-section active-section md-surface">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Overview</p>
+            <h2>数据概览</h2>
+            <p>查看当前资源、JSON、可合并目录和 ffmpeg 状态。点击左侧导航切换到具体工作区。</p>
+          </div>
+          <div class="overview-actions">
+            <button id="overviewRefreshBtn" class="md-button tonal" type="button">刷新数据</button>
+          </div>
+        </div>
+        <div class="dashboard-grid">
+        <article class="stat-card md-surface"><span>动画</span><strong id="animationCount">0</strong><small>当前列表</small></article>
+        <article class="stat-card md-surface"><span>JSON</span><strong id="jsonCount">0</strong><small>可下载文件</small></article>
+        <article class="stat-card md-surface"><span>季目录</span><strong id="seasonCount">0</strong><small>可合并目录</small></article>
+        <article class="stat-card md-surface"><span>ffmpeg</span><strong id="ffmpegText">--</strong><small>合并依赖</small></article>
+        </div>
+        <div class="quick-actions">
+          <button class="quick-card" data-target="sectionLibrary" type="button"><strong>采集元数据</strong><span>加载动画并生成 JSON →</span></button>
+          <button class="quick-card" data-target="sectionDownloads" type="button"><strong>下载资源</strong><span>选择 JSON 下载 ts/字幕 →</span></button>
+          <button class="quick-card" data-target="sectionMerge" type="button"><strong>合并 MP4</strong><span>选择季目录输出视频 →</span></button>
+        </div>
+      </section>
+
+      <section id="sectionLibrary" class="workspace-section md-surface hidden-section">
+        <div class="section-head section-head-stacked">
+          <div>
+            <p class="eyebrow">Step 1</p>
+            <h2>资源采集</h2>
+            <p>先加载动画列表，再分页选择要采集的动画。每页默认显示 30 条。</p>
+          </div>
+          <div class="primary-actions">
+            <button id="startMetadataBtn" class="md-button filled" type="button">采集</button>
+          </div>
+        </div>
+
+        <div class="control-panel resource-panel">
+          <div class="control-title"><strong>筛选条件</strong><span>选择资源范围后点击加载</span></div>
+          <div class="control-grid resource-grid">
+            <label class="field compact"><span>模式</span><select id="modeSelect"><option value="all">全部动画</option><option value="age">分龄动画</option></select></label>
+            <label class="field compact"><span>年龄段</span><select id="ageSelect" disabled><option value="">选择分龄模式后加载</option></select></label>
+            <label class="field compact"><span>语言</span><select id="langSelect"><option value="2">英文</option><option value="0">中文</option></select></label>
+            <button id="loadAgeBtn" class="md-button tonal" type="button">年龄段</button>
+            <button id="loadAnimationsBtn" class="md-button filled" type="button">加载</button>
+          </div>
+        </div>
+
+        <div class="list-panel">
+          <div class="list-panel-head">
+            <label class="search-field"><span>🔎</span><input id="animationFilter" placeholder="搜索动画" /></label>
+            <div class="selection-summary"><span id="animationPageInfo">0 / 0</span><span id="animationSelectedInfo">已选 0</span></div>
+            <div class="toolbar-actions">
+              <button id="selectAllAnimationsBtn" class="md-button text" type="button">选本页</button>
+              <button id="clearAnimationsBtn" class="md-button text" type="button">清除</button>
+            </div>
+          </div>
+          <div id="animationsEmpty" class="empty-state"><div>🎞️</div><h3>尚未加载动画</h3><p>点击“加载”获取资源列表。</p></div>
+          <div class="data-list paged-list" id="animationsBody"></div>
+          <div class="pagination-bar">
+            <button id="animationPrevBtn" class="md-button outlined" type="button">上一页</button>
+            <span id="animationPaginationText">第 0 / 0 页</span>
+            <button id="animationNextBtn" class="md-button outlined" type="button">下一页</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="sectionDownloads" class="workspace-section md-surface hidden-section">
+        <div class="section-head section-head-stacked">
+          <div>
+            <p class="eyebrow">Step 2</p>
+            <h2>下载资源</h2>
+            <p>选择 JSON 文件后下载 m3u8 ts 片段和字幕。</p>
+          </div>
+          <button id="startDownloadBtn" class="md-button filled" type="button">下载</button>
+        </div>
+        <div class="control-panel split-control">
+          <div>
+            <div class="control-title"><strong>文件来源</strong><span>筛选 outputs 目录</span></div>
+            <label class="field compact"><span>来源</span><select id="jsonSource"><option value="all">全部动画</option><option value="age">分龄动画</option></select></label>
+          </div>
+          <div class="action-cluster">
+            <button id="refreshJsonBtn" class="md-button tonal" type="button">刷新</button>
+            <button id="selectAllJsonBtn" class="md-button text" type="button">选本页</button>
+            <button id="clearJsonBtn" class="md-button text" type="button">清除已选</button>
+            <button id="deleteJsonBtn" class="md-button text danger" type="button">删除</button>
+          </div>
+        </div>
+        <div id="jsonEmpty" class="empty-state"><div>📄</div><h3>暂无 JSON 文件</h3><p>请先在资源区采集元数据。</p></div>
+        <div class="list-panel-head json-list-head">
+          <div class="selection-summary"><span id="jsonPageInfo">0 条</span><span id="jsonSelectedInfo">已选 0</span></div>
+          <div></div>
+        </div>
+        <div class="data-list paged-list" id="jsonBody"></div>
+        <div class="pagination-bar">
+          <button id="jsonPrevBtn" class="md-button outlined" type="button">上一页</button>
+          <span id="jsonPaginationText">第 0 / 0 页</span>
+          <button id="jsonNextBtn" class="md-button outlined" type="button">下一页</button>
+        </div>
+      </section>
+
+      <section id="sectionMerge" class="workspace-section md-surface hidden-section">
+        <div class="section-head section-head-stacked">
+          <div>
+            <p class="eyebrow">Step 3</p>
+            <h2>合并 MP4</h2>
+            <p>通过 ffmpeg 将已下载目录合并为 MP4，可选硬编码字幕。</p>
+          </div>
+          <button id="startMergeBtn" class="md-button filled" type="button">合并</button>
+        </div>
+        <div class="merge-control-grid">
+          <article class="merge-status-card">
+            <span>合并依赖</span>
+            <strong id="ffmpegStatus" class="merge-status-text">ffmpeg 未检查</strong>
+            <button id="checkFfmpegBtn" class="md-button tonal" type="button">重新检测</button>
+          </article>
+          <article class="merge-option-card">
+            <label class="field compact"><span>目录来源</span><select id="seasonSource"><option value="both">全部目录</option><option value="all">outputs/all</option><option value="age">outputs/age</option></select></label>
+            <label class="switch"><input id="embedSubtitle" type="checkbox" checked /><span></span><b>嵌入字幕</b></label>
+          </article>
+          <article class="merge-option-card actions-card">
+            <span>目录操作</span>
+            <div class="action-cluster">
+              <button id="refreshSeasonsBtn" class="md-button tonal" type="button">刷新</button>
+              <button id="selectAllSeasonsBtn" class="md-button text" type="button">全选</button>
+            </div>
+          </article>
+        </div>
+        <div id="seasonsEmpty" class="empty-state"><div>📁</div><h3>暂无可合并目录</h3><p>请先下载 JSON 对应资源。</p></div>
+        <div class="data-list" id="seasonsBody"></div>
+      </section>
+
+      <section id="sectionTask" class="workspace-section md-surface task-panel hidden-section">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Task</p>
+            <h2>任务进度</h2>
+            <p>耗时操作会在后台执行，页面可实时查看进度和日志。</p>
+          </div>
+          <div class="primary-actions">
+            <button id="clearAllTasksBtn" class="md-button text danger" type="button">清空任务</button>
+            <button id="cancelTaskBtn" class="md-button danger" disabled type="button">取消任务</button>
+          </div>
+        </div>
+        <div class="progress-wrap">
+          <div class="progress-meta"><span id="taskStatus">无任务</span><strong id="taskProgress">0%</strong></div>
+          <div class="linear-progress"><div id="progressBar" style="width:0%"></div></div>
+        </div>
+        <div class="task-cards">
+          <div><span>当前项目</span><strong id="taskCurrent">-</strong></div>
+          <div><span>完成</span><strong id="taskDone">0 / 0</strong></div>
+          <div><span>成功</span><strong id="taskSuccess">0</strong></div>
+          <div><span>失败</span><strong id="taskFailed">0</strong></div>
+        </div>
+        <div class="task-history-card">
+          <div class="task-history-head"><strong>历史任务</strong><button id="refreshTasksBtn" class="md-button text" type="button">刷新</button></div>
+          <div id="taskHistoryBody" class="task-history-list"></div>
+        </div>
+        <details class="log-card" open>
+          <summary><span>任务日志</span><button id="clearLogsBtn" class="md-button text log-clear" type="button">清空</button></summary>
+          <pre id="taskLogs">等待任务...</pre>
+        </details>
+      </section>
+    </main>
+  </section>
+
+  <div id="toastHost" class="toast-host" aria-live="polite"></div>
+
+  <dialog id="confirmDialog" class="md-dialog">
+    <form method="dialog">
+      <h3 id="confirmTitle">确认操作</h3>
+      <p id="confirmMessage">是否继续？</p>
+      <div class="dialog-actions">
+        <button value="cancel" class="md-button text" type="submit">取消</button>
+        <button id="confirmOkBtn" value="ok" class="md-button filled" type="submit">确认</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

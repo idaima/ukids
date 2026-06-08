@@ -224,7 +224,8 @@ def download_single_ts(args: tuple) -> tuple[int, bool, int]:
     return (index, success, size, False)
 
 
-def download_ts_segments(ts_urls: list[str], ts_dir: str, name_prefix: str = "segment") -> tuple[int, int, int]:
+def download_ts_segments(ts_urls: list[str], ts_dir: str, name_prefix: str = "segment",
+                         progress_cb=None, cancel_cb=None) -> tuple[int, int, int]:
     """
     并发下载所有 ts 片段到指定目录
     
@@ -257,6 +258,18 @@ def download_ts_segments(ts_urls: list[str], ts_dir: str, name_prefix: str = "se
         speed_str = f"{format_size(int(s['speed']))}/s" if s['speed'] > 0 else "计算中..."
         extra = f"成功: {s['success']} | 跳过: {s['skipped']} | 大小: {format_size(s['total_size'])} | 速度: {speed_str}"
         print_progress(s['completed'], s['total'], prefix="      ", extra_info=extra)
+        if progress_cb:
+            progress_cb({
+                "stage": "segments",
+                "completed": s["completed"],
+                "total": s["total"],
+                "success": s["success"],
+                "skipped": s["skipped"],
+                "failed": s["failed"],
+                "total_size": s["total_size"],
+                "speed": s["speed"],
+                "message": extra,
+            })
     
     # 使用线程池并发下载
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -265,6 +278,10 @@ def download_ts_segments(ts_urls: list[str], ts_dir: str, name_prefix: str = "se
         
         # 处理完成的任务
         for future in as_completed(futures):
+            if cancel_cb and cancel_cb():
+                for pending in futures:
+                    pending.cancel()
+                break
             try:
                 index, success, size, skipped = future.result()
                 if success:
@@ -297,8 +314,9 @@ def sanitize_filename(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]', '_', name)
 
 
-def process_episode(episode: dict[str, Any], episode_dir: str, index: int, 
-                   episode_num: int, total_episodes: int) -> tuple[bool, int]:
+def process_episode(episode: dict[str, Any], episode_dir: str, index: int,
+                   episode_num: int, total_episodes: int,
+                   progress_cb=None, cancel_cb=None) -> tuple[bool, int]:
     """
     处理单个剧集：下载 ts 片段和字幕
     
@@ -329,13 +347,39 @@ def process_episode(episode: dict[str, Any], episode_dir: str, index: int,
     done_marker = os.path.join(episode_path, ".download_complete")
     if os.path.exists(done_marker):
         print(f"  [{episode_num}/{total_episodes}] ⏭ 已完成，跳过: {title}")
+        if progress_cb:
+            progress_cb({
+                "stage": "episode_skipped",
+                "episode": title,
+                "episode_num": episode_num,
+                "total_episodes": total_episodes,
+                "message": f"已完成，跳过: {title}",
+            })
         return True, 0
     
     if not play_url:
         print(f"  [{episode_num}/{total_episodes}] ✗ 缺少播放地址: {title}")
+        if progress_cb:
+            progress_cb({
+                "stage": "episode_failed",
+                "episode": title,
+                "episode_num": episode_num,
+                "total_episodes": total_episodes,
+                "message": f"缺少播放地址: {title}",
+            })
         return False, 0
     
     print(f"\n  [{episode_num}/{total_episodes}] ▶ {title}")
+    if progress_cb:
+        progress_cb({
+            "stage": "episode_start",
+            "episode": title,
+            "episode_num": episode_num,
+            "total_episodes": total_episodes,
+            "message": f"开始下载: {title}",
+        })
+    if cancel_cb and cancel_cb():
+        return False, 0
     
     ensure_dir(episode_path)
     
@@ -348,7 +392,8 @@ def process_episode(episode: dict[str, Any], episode_dir: str, index: int,
     
     # 下载 ts 片段
     success_count, skipped_count, total_size = download_ts_segments(
-        ts_urls, ts_dir, name_prefix=episode_name
+        ts_urls, ts_dir, name_prefix=episode_name,
+        progress_cb=progress_cb, cancel_cb=cancel_cb
     )
     
     if success_count == 0:
@@ -392,12 +437,24 @@ def process_episode(episode: dict[str, Any], episode_dir: str, index: int,
         with open(done_marker, 'w') as f:
             f.write("done")
         print(f"    ✓ 下载完成")
+    if progress_cb:
+        progress_cb({
+            "stage": "episode_done",
+            "episode": title,
+            "episode_num": episode_num,
+            "total_episodes": total_episodes,
+            "success_count": success_count,
+            "ts_count": len(ts_urls),
+            "total_size": total_size,
+            "message": f"下载完成: {title}",
+        })
     
     return True, total_size
 
 
 def process_json_file(json_path: str, downloads_base_dir: str, 
-                     file_num: int = 1, total_files: int = 1) -> tuple[int, int, int]:
+                     file_num: int = 1, total_files: int = 1,
+                     progress_cb=None, cancel_cb=None) -> tuple[int, int, int]:
     """
     处理单个 JSON 文件，下载所有视频
     
@@ -428,21 +485,45 @@ def process_json_file(json_path: str, downloads_base_dir: str,
     
     total_episodes = len(episodes)
     print(f"  📺 共 {total_episodes} 集待处理")
+    if progress_cb:
+        progress_cb({
+            "stage": "json_start",
+            "json_name": json_name,
+            "file_num": file_num,
+            "total_files": total_files,
+            "total_episodes": total_episodes,
+            "message": f"开始处理 JSON: {json_name}",
+        })
     
     success = 0
     fail = 0
     total_size = 0
     
     for i, episode in enumerate(episodes):
+        if cancel_cb and cancel_cb():
+            print("\n  ⚠ 已请求取消，停止处理后续剧集")
+            break
         ep_success, ep_size = process_episode(
             episode, output_dir, i + 1, 
-            episode_num=i + 1, total_episodes=total_episodes
+            episode_num=i + 1, total_episodes=total_episodes,
+            progress_cb=progress_cb, cancel_cb=cancel_cb
         )
         if ep_success:
             success += 1
         else:
             fail += 1
         total_size += ep_size
+        if progress_cb:
+            progress_cb({
+                "stage": "json_progress",
+                "json_name": json_name,
+                "done": i + 1,
+                "total": total_episodes,
+                "success": success,
+                "failed": fail,
+                "total_size": total_size,
+                "message": f"{json_name}: 已处理 {i + 1}/{total_episodes}",
+            })
     
     # 文件处理完成统计
     print(f"\n  {'─' * 50}")
