@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 from typing import Any, Literal
 
@@ -23,7 +24,7 @@ WEB_DIR = PROJECT_ROOT / "web"
 GUI_STORE_DIR = PROJECT_ROOT / "outputs" / ".gui"
 
 task_manager = TaskManager(max_workers=3, store_path=GUI_STORE_DIR / "tasks.json")
-app = FastAPI(title="ukids GUI", version="0.1.0")
+app = FastAPI(title="小小优趣助手", version="0.1.0")
 
 
 class SmsRequest(BaseModel):
@@ -68,6 +69,38 @@ def require_token() -> str:
 
 def normalize_event(event: dict[str, Any] | None) -> dict[str, Any]:
     return event or {}
+
+
+def cleanup_sidecar_for_file(target: Path) -> list[str]:
+    """删除 JSON 对应的同名下载目录。"""
+    removed: list[str] = []
+    sidecar_dir = target.with_suffix("")
+    if sidecar_dir.exists() and sidecar_dir.is_dir():
+        shutil.rmtree(sidecar_dir)
+        removed.append(to_project_relative(sidecar_dir))
+    return removed
+
+
+def cleanup_task_artifacts(task: dict[str, Any]) -> list[str]:
+    """根据任务 result 清理采集/下载/合并产生的 outputs 产物。"""
+    removed: list[str] = []
+    result = task.get("result") or {}
+    candidates: list[str] = []
+    candidates.extend(result.get("output_files") or [])
+    candidates.extend(result.get("output_dirs") or [])
+    for path in candidates:
+        try:
+            target = safe_output_path(path, must_exist=False)
+            if target.exists():
+                if target.is_dir():
+                    shutil.rmtree(target)
+                elif target.is_file():
+                    target.unlink()
+                    removed.extend(cleanup_sidecar_for_file(target))
+                removed.append(to_project_relative(target))
+        except Exception:
+            continue
+    return removed
 
 
 @app.get("/api/auth/status")
@@ -148,6 +181,7 @@ def delete_files(req: DeleteFilesRequest):
                 raise ValueError("只允许删除文件")
             target.unlink()
             deleted.append(to_project_relative(target))
+            deleted.extend(cleanup_sidecar_for_file(target))
         except Exception as exc:  # noqa: BLE001
             failed.append({"path": path, "error": str(exc)})
     return {"success": len(failed) == 0, "deleted": deleted, "failed": failed}
@@ -296,6 +330,8 @@ def get_task(task_id: str):
 
 @app.delete("/api/tasks")
 def clear_tasks():
+    for task in task_manager.list_tasks():
+        cleanup_task_artifacts(task)
     task_manager.clear_tasks()
     return {"success": True}
 
@@ -303,6 +339,8 @@ def clear_tasks():
 @app.delete("/api/tasks/{task_id}")
 def delete_task(task_id: str):
     try:
+        task = task_manager.get_task(task_id)
+        cleanup_task_artifacts(task)
         task_manager.delete_task(task_id)
         return {"success": True}
     except KeyError as exc:

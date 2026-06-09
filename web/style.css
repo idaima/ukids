@@ -240,3 +240,10 @@ code { background: var(--md-surface-container-high); padding: 2px 6px; border-ra
 .task-open { border: 0; background: transparent; text-align: left; display: grid; gap: 3px; color: var(--md-on-surface); cursor: pointer; min-width: 0; }
 .task-open span, .task-open small { color: var(--md-on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .empty-mini { color: var(--md-on-surface-variant); text-align: center; padding: 18px; }
+
+/* Login header alignment */
+.login-card { text-align: center; }
+.login-card .brand-mark { margin: 0 auto; }
+.login-card .subtle { margin-left: auto; margin-right: auto; max-width: 360px; }
+.login-card .field, .login-card .field-row, .login-card .login-footer { text-align: left; }
+.login-card .segmented { text-align: center; }

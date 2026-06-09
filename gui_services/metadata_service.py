@@ -27,6 +27,7 @@ def collect_metadata(
     success_count = 0
     fail_count = 0
     failed_list: list[dict[str, Any]] = []
+    output_files: list[str] = []
 
     if progress_cb:
         progress_cb(total=total, done=0, success=0, failed=0, progress=0.0, message="开始采集元数据")
@@ -48,7 +49,8 @@ def collect_metadata(
                 log=f"开始处理: {name}",
             )
 
-        ok, failed_info = collect_one_animation(api, animation, output_dir, age_name, progress_cb, cancel_cb)
+        ok, failed_info, files = collect_one_animation(api, animation, output_dir, age_name, progress_cb, cancel_cb)
+        output_files.extend(files)
         if ok:
             success_count += 1
         else:
@@ -77,6 +79,8 @@ def collect_metadata(
         "success": success_count,
         "failed": fail_count,
         "failed_items": failed_list,
+        "output_files": output_files,
+        "output_dirs": [path[:-5] for path in output_files if path.endswith(".json")],
     }
 
 
@@ -87,7 +91,7 @@ def collect_one_animation(
     age_name: str | None = None,
     progress_cb: ProgressCallback | None = None,
     cancel_cb: CancelCallback | None = None,
-) -> tuple[bool, dict[str, Any] | None]:
+) -> tuple[bool, dict[str, Any] | None, list[str]]:
     ip_id = animation.get("ipId")
     name = animation.get("name", "未知动画")
     lang = animation.get("lang", 2)
@@ -97,18 +101,19 @@ def collect_one_animation(
 
     detail = api.get_animation_detail(ip_id, filter_lang=lang)
     if not detail:
-        return False, {"ipId": ip_id, "name": name, "error": "获取动画详情失败"}
+        return False, {"ipId": ip_id, "name": name, "error": "获取动画详情失败"}, []
 
     seasons = detail.get("seasons", [])
     if not seasons:
-        return False, {"ipId": ip_id, "name": name, "error": "没有剧集季"}
+        return False, {"ipId": ip_id, "name": name, "error": "没有剧集季"}, []
 
     success_seasons = 0
     failed_episodes: list[dict[str, Any]] = []
+    output_files: list[str] = []
 
     for season_index, season in enumerate(seasons, 1):
         if cancel_cb and cancel_cb():
-            return False, {"ipId": ip_id, "name": name, "error": "cancelled"}
+            return False, {"ipId": ip_id, "name": name, "error": "cancelled"}, output_files
 
         season_id = season.get("id")
         season_name = season.get("name", "未知季")
@@ -128,7 +133,7 @@ def collect_one_animation(
         season_episodes: list[dict[str, Any]] = []
         for episode_index, episode in enumerate(episodes, 1):
             if cancel_cb and cancel_cb():
-                return False, {"ipId": ip_id, "name": name, "error": "cancelled"}
+                return False, {"ipId": ip_id, "name": name, "error": "cancelled"}, output_files
 
             en_id = episode.get("enId")
             en_title = episode.get("enTitle", f"第{episode_index}集")
@@ -151,13 +156,14 @@ def collect_one_animation(
             time.sleep(0.1)
 
         if season_episodes:
-            save_to_json(season_episodes, output_dir, name, season_name, season_lang, age_name)
+            filepath = save_to_json(season_episodes, output_dir, name, season_name, season_lang, age_name)
+            output_files.append(filepath)
             success_seasons += 1
             if progress_cb:
                 progress_cb(log=f"已保存: {name} / {season_name} ({len(season_episodes)} 集)")
 
     if success_seasons > 0:
         if failed_episodes:
-            return True, {"ipId": ip_id, "name": name, "partial": True, "failed_episodes": failed_episodes}
-        return True, None
-    return False, {"ipId": ip_id, "name": name, "error": "没有获取到剧集数据"}
+            return True, {"ipId": ip_id, "name": name, "partial": True, "failed_episodes": failed_episodes}, output_files
+        return True, None, output_files
+    return False, {"ipId": ip_id, "name": name, "error": "没有获取到剧集数据"}, output_files

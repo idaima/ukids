@@ -288,7 +288,7 @@ async function refreshTaskHistory() {
 }
 
 async function deleteTask(taskId) {
-  const ok = await confirmDialog('删除任务', '删除后该任务记录和日志将从任务列表中移除，是否继续？', '删除');
+  const ok = await confirmDialog('删除任务', '删除后该任务记录、日志和任务产物会一并移除，是否继续？', '删除');
   if (!ok) return;
   await api(`/api/tasks/${taskId}`, { method: 'DELETE' });
   if (state.currentTaskId === taskId) {
@@ -301,7 +301,7 @@ async function deleteTask(taskId) {
 }
 
 async function clearAllTasks() {
-  const ok = await confirmDialog('清空所有任务', '将删除所有历史任务和日志记录。正在运行的任务也会从列表移除，是否继续？', '清空');
+  const ok = await confirmDialog('清空所有任务', '将删除所有历史任务、日志记录和可识别的任务产物。正在运行的任务也会从列表移除，是否继续？', '清空');
   if (!ok) return;
   await api('/api/tasks', { method: 'DELETE' });
   state.currentTaskId = null;
@@ -462,7 +462,7 @@ async function refreshJsonFiles() {
 async function deleteSelectedJsonFiles() {
   const paths = Array.from(state.selectedJson);
   if (!paths.length) return showAlert('globalAlert', '请先选择要删除的 JSON 文件。');
-  const ok = await confirmDialog('删除本地文件', `将删除 ${paths.length} 个本地 JSON 文件。此操作不可恢复，是否继续？`, '删除');
+  const ok = await confirmDialog('删除本地文件', `将删除 ${paths.length} 个本地 JSON 文件及其同名下载目录。此操作不可恢复，是否继续？`, '删除');
   if (!ok) return;
   await withAction('deleteJsonBtn', '删除中...', async () => {
     const data = await api('/api/files/delete', { method: 'POST', body: JSON.stringify({ paths }) });

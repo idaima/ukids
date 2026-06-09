@@ -228,8 +228,8 @@ def sanitize_filename(name: str) -> str:
     return name.strip('_')
 
 
-def save_to_json(data: list[dict[str, Any]], output_dir: str, animation_name: str, 
-                 season_name: str, lang: int, age_name: str = None):
+def save_to_json(data: list[dict[str, Any]], output_dir: str, animation_name: str,
+                 season_name: str, lang: int, age_name: str = None) -> str:
     """
     保存数据到 JSON 文件
     
@@ -259,6 +259,7 @@ def save_to_json(data: list[dict[str, Any]], output_dir: str, animation_name: st
         json.dump(data, f, ensure_ascii=False, indent=2)
     
     print(f"    ✓ 已保存到 {filepath} ({len(data)} 集)")
+    return filepath
 
 
 def save_failed_record(failed_list: list[dict], mode: str):
